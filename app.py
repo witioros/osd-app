@@ -5,7 +5,6 @@ import re
 from collections import defaultdict
 import io
 
-# ตั้งค่าหน้าเว็บ
 st.set_page_config(page_title="OSD Stone Extractor", page_icon="💎")
 st.title("💎 ระบบแยกข้อมูล OSD Stone")
 st.write("อัปโหลดไฟล์รายงาน PDF เพื่อแยกรายการพลอยที่ไม่พอในสต็อก")
@@ -15,7 +14,8 @@ def process_pdf(pdf_file_obj):
     dict_non_aa = defaultdict(int)
     current_product = None
     
-    pattern_product = re.compile(r'([A-Za-z][A-Za-z0-9\(\)\#\-\_\s]*)\s*/\s*([A-Za-z0-9\(\)\#\-\_\.\s]+)\s*/\s*([0-9\.\*\-\+\s]*)\s*/\s*([A-Za-z0-9\(\)\@\s\_\.]+)')
+    # ใช้ Regex เวอร์ชันที่ถูกต้องที่สุด (รองรับจุดทศนิยมใน Cut เช่น DR(3.00MM))
+    pattern_product = re.compile(r'([A-Za-z][A-Za-z0-9\(\)\#\-\_]*)\s*/\s*([A-Za-z0-9\(\)\#\-\_\.]+)\s*/\s*([0-9\.\*\-\+]*)\s*/\s*([A-Za-z0-9\(\)\@\s\_\.]+)')
 
     with pdfplumber.open(pdf_file_obj) as pdf:
         for page in pdf.pages:
@@ -23,20 +23,11 @@ def process_pdf(pdf_file_obj):
             if not text:
                 continue
                 
-            raw_lines = text.split('\n')
-            lines = []
-            
-            for r in raw_lines:
-                r = r.strip()
-                if not r: continue
-                if lines and (r.startswith('/') or r.startswith(')') or r.startswith('*')):
-                    lines[-1] += r
-                elif lines and (lines[-1].endswith('/') or lines[-1].endswith('(') or lines[-1].endswith('*')):
-                    lines[-1] += r
-                else:
-                    lines.append(r)
-
-            for line_str in lines:
+            lines = text.split('\n')
+            for line in lines:
+                line_str = line.strip()
+                
+                # 1. ค้นหาบรรทัดที่เป็นข้อมูลพลอย
                 match = pattern_product.search(line_str)
                 if match:
                     stone = match.group(1).strip()
@@ -44,17 +35,21 @@ def process_pdf(pdf_file_obj):
                     size = match.group(3).strip()
                     grade = match.group(4).strip()
                     
+                    # ตัดช่องว่างกว้างๆ ที่เกิดจากการเว้นวรรคคอลัมน์
                     grade = re.split(r'\s{2,}', grade)[0]
+                    # ตัดตัวเลขราคาที่อยู่ท้ายสุดของข้อความเกรดออก
                     grade = re.sub(r'\s+[\d\.]+$', '', grade).strip()
                     
                     current_product = (stone, cut, size, grade)
                 
+                # 2. ค้นหายอดติดลบเมื่อเจอคำว่า Total Inventory
                 if current_product and 'Total Inventory' in line_str:
                     negatives = re.findall(r'-\d+', line_str)
                     if negatives:
                         bl_value = abs(int(negatives[-1]))
                         stone, cut, size, grade = current_product
                         
+                        # แยกกลุ่มลงตะกร้า
                         if grade.upper().startswith('AA'):
                             dict_aa[(stone, cut, size, grade)] += bl_value
                         else:
@@ -83,12 +78,10 @@ if uploaded_file is not None:
         with st.spinner("กำลังอ่านและประมวลผลไฟล์..."):
             df_aa, df_non_aa = process_pdf(uploaded_file)
             
-            # แสดงตัวอย่างตารางบนหน้าเว็บ
             st.success("ประมวลผลเสร็จสิ้น!")
             st.write(f"พบพลอยเกรด AA: {len(df_aa)} รายการ")
             st.write(f"พบพลอยเกรดอื่นๆ: {len(df_non_aa)} รายการ")
             
-            # แปลงข้อมูลเป็นไฟล์ Excel ในหน่วยความจำเพื่อเตรียมดาวน์โหลด
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 if not df_aa.empty:
@@ -98,7 +91,6 @@ if uploaded_file is not None:
             
             excel_data = output.getvalue()
             
-            # สร้างปุ่มดาวน์โหลด
             st.download_button(
                 label="3. กดเพื่อดาวน์โหลดไฟล์ Excel",
                 data=excel_data,
