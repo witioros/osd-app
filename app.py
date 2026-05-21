@@ -53,7 +53,6 @@ def process_pdf(pdf_bytes, mapping_dict):
                             
                         current_product = None
 
-    # เอาคอลัมน์ Supplier ออก
     data_aa = [{'Stone': k[0], 'Cut': k[1], 'Size': k[2], 'PCS': v, 'Grade': k[3]} for k, v in dict_aa.items()]
     data_non_aa = [{'Stone': k[0], 'Cut': k[1], 'Size': k[2], 'PCS': v, 'Grade': k[3]} for k, v in dict_non_aa.items()]
     
@@ -76,9 +75,17 @@ mapping_file = st.file_uploader("อัปโหลดไฟล์แปลง�
 mapping_dict = {}
 if mapping_file is not None:
     try:
-        # ตรวจสอบนามสกุลไฟล์เพื่อเลือกวิธีอ่านข้อมูลที่ถูกต้อง
         if mapping_file.name.lower().endswith('.csv'):
-            df_map = pd.read_csv(mapping_file)
+            file_bytes = mapping_file.getvalue()
+            # วนลูปทดสอบการเข้ารหัสภาษาไทยรูปแบบต่างๆ และตรวจจับเครื่องหมายแบ่งคอลัมน์อัตโนมัติ
+            for encoding in ['utf-8', 'utf-8-sig', 'cp874', 'tis-620']:
+                try:
+                    df_map = pd.read_csv(io.BytesIO(file_bytes), sep=None, engine='python', encoding=encoding)
+                    break
+                except Exception:
+                    continue
+            else:
+                df_map = pd.read_csv(io.BytesIO(file_bytes))
         else:
             df_map = pd.read_excel(mapping_file)
             
