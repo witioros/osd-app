@@ -14,7 +14,6 @@ def process_pdf(pdf_bytes, mapping_dict):
     dict_non_aa = defaultdict(int)
     current_product = None
     
-    # เพิ่มเครื่องหมายขีด (-) และบวก (+) เข้าไปในกลุ่มที่ 4 (Grade) เพื่อให้ครอบคลุมชื่อเกรดทุกรูปแบบ
     pattern_product = re.compile(r'([A-Za-z][A-Za-z0-9\(\)\#\-\_]*)\s*/\s*([A-Za-z0-9\(\)\#\-\_\.]+)\s*/\s*([0-9\.\*\-\+]*)\s*/\s*([A-Za-z0-9\(\)\@\s\_\.\-\+]+)')
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
@@ -30,7 +29,6 @@ def process_pdf(pdf_bytes, mapping_dict):
                 match = pattern_product.search(line_str)
                 if match:
                     stone_abbr = match.group(1).strip()
-                    # ระบบตรวจสอบตัวย่อ ถ้าตรงกับใน Excel จะสลับเป็นชื่อเต็ม
                     stone = mapping_dict.get(stone_abbr, stone_abbr)
                     
                     cut = match.group(2).strip()
@@ -55,8 +53,9 @@ def process_pdf(pdf_bytes, mapping_dict):
                             
                         current_product = None
 
-    data_aa = [{'Stone': k[0], 'Cut': k[1], 'Size': k[2], 'PCS': v, 'Grade': k[3], 'Supplier': ''} for k, v in dict_aa.items()]
-    data_non_aa = [{'Stone': k[0], 'Cut': k[1], 'Size': k[2], 'PCS': v, 'Grade': k[3], 'Supplier': ''} for k, v in dict_non_aa.items()]
+    # เอาคอลัมน์ Supplier ออก
+    data_aa = [{'Stone': k[0], 'Cut': k[1], 'Size': k[2], 'PCS': v, 'Grade': k[3]} for k, v in dict_aa.items()]
+    data_non_aa = [{'Stone': k[0], 'Cut': k[1], 'Size': k[2], 'PCS': v, 'Grade': k[3]} for k, v in dict_non_aa.items()]
     
     df_aa = pd.DataFrame(data_aa)
     df_non_aa = pd.DataFrame(data_non_aa)
@@ -71,18 +70,22 @@ def process_pdf(pdf_bytes, mapping_dict):
 # ส่วนติดต่อผู้ใช้ (UI)
 st.write("---")
 st.subheader("1. ฐานข้อมูลแปลงชื่อพลอย (ไม่บังคับ)")
-st.write("อัปโหลดไฟล์ Excel ที่มีตัวย่อในคอลัมน์แรก และชื่อเต็มในคอลัมน์สอง")
-mapping_file = st.file_uploader("อัปโหลดไฟล์ Excel แปลงชื่อ", type=["xlsx", "xls"])
+st.write("อัปโหลดไฟล์ Excel หรือ CSV ที่มีตัวย่อในคอลัมน์แรก และชื่อเต็มในคอลัมน์สอง")
+mapping_file = st.file_uploader("อัปโหลดไฟล์แปลงชื่อ", type=["xlsx", "xls", "csv"])
 
 mapping_dict = {}
 if mapping_file is not None:
     try:
-        df_map = pd.read_excel(mapping_file)
-        # ดึงข้อมูลจากคอลัมน์ A (ตัวย่อ) และคอลัมน์ B (ชื่อเต็ม) มาเป็นเงื่อนไขแปลงคำ
+        # ตรวจสอบนามสกุลไฟล์เพื่อเลือกวิธีอ่านข้อมูลที่ถูกต้อง
+        if mapping_file.name.lower().endswith('.csv'):
+            df_map = pd.read_csv(mapping_file)
+        else:
+            df_map = pd.read_excel(mapping_file)
+            
         mapping_dict = dict(zip(df_map.iloc[:, 0].astype(str).str.strip(), df_map.iloc[:, 1].astype(str).str.strip()))
         st.success(f"โหลดข้อมูลสำเร็จ: พบรายชื่อพลอย {len(mapping_dict)} รายการ")
     except Exception as e:
-        st.error("ไม่สามารถอ่านไฟล์ Excel ได้")
+        st.error(f"ไม่สามารถอ่านไฟล์ได้: {e}")
 
 st.write("---")
 st.subheader("2. อัปโหลดไฟล์ OSD Report (PDF)")
