@@ -14,7 +14,7 @@ def process_pdf(pdf_bytes, mapping_dict):
     dict_non_aa = defaultdict(int)
     current_product = None
     
-    # แก้ไข Regex ช่องที่ 2 (Cut) เป็น (.+?) เพื่อรองรับช่องว่างและเครื่องหมาย / ซ้อนด้านในวงเล็บ
+    # Regex สำหรับหาชื่อพลอย ครอบคลุม Cut ทุกรูปแบบรวมถึง DR(3.00MM)
     pattern_product = re.compile(r'([A-Za-z][A-Za-z0-9\(\)\#\-\_\+]*)\s*/\s*(.+?)\s*/\s*([0-9\.\*\-\+]*)\s*/\s*([A-Za-z0-9\(\)\@\s\_\.\-\+]+)')
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
@@ -42,17 +42,20 @@ def process_pdf(pdf_bytes, mapping_dict):
                     current_product = (stone, cut, size, grade)
                 
                 if current_product and 'Total Inventory' in line_str:
-                    negatives = re.findall(r'-\d+', line_str)
+                    # ค้นหาตัวเลขติดลบ รองรับกรณี - 20 (มีช่องว่าง)
+                    negatives = re.findall(r'-\s*\d+', line_str)
                     
-                    # ถ้ายอดติดลบไม่บรรทัดนี้ ให้กวาดสายตาลงไปดูบรรทัดล่างอีก 3-5 บรรทัด (แก้ปัญหาเลขปัดตกลงไป)
+                    # ขยายระยะการค้นหาลงด้านล่างเป็น 10 บรรทัด ป้องกันตัวเลขตกหล่น
                     if not negatives:
-                        for j in range(i, min(len(lines), i + 5)):
-                            if re.search(r'-\d+', lines[j]):
-                                negatives = re.findall(r'-\d+', lines[j])
+                        for j in range(i, min(len(lines), i + 10)):
+                            if re.search(r'-\s*\d+', lines[j]):
+                                negatives = re.findall(r'-\s*\d+', lines[j])
                                 break
 
                     if negatives:
-                        bl_value = abs(int(negatives[-1]))
+                        # ลบช่องว่างออกจากเครื่องหมายก่อนแปลงเป็นตัวเลข
+                        clean_val = negatives[-1].replace(" ", "")
+                        bl_value = abs(int(clean_val))
                         stone, cut, size, grade = current_product
                         
                         if grade.upper().startswith('AA'):
