@@ -24,7 +24,7 @@ def process_pdf(pdf_bytes, mapping_dict):
                 continue
                 
             lines = text.split('\n')
-            for line in lines:
+            for i, line in enumerate(lines):
                 line_str = line.strip()
                 
                 match = pattern_product.search(line_str)
@@ -43,6 +43,14 @@ def process_pdf(pdf_bytes, mapping_dict):
                 
                 if current_product and 'Total Inventory' in line_str:
                     negatives = re.findall(r'-\d+', line_str)
+                    
+                    # ถ้ายอดติดลบไม่บรรทัดนี้ ให้กวาดสายตาลงไปดูบรรทัดล่างอีก 3-5 บรรทัด (แก้ปัญหาเลขปัดตกลงไป)
+                    if not negatives:
+                        for j in range(i, min(len(lines), i + 5)):
+                            if re.search(r'-\d+', lines[j]):
+                                negatives = re.findall(r'-\d+', lines[j])
+                                break
+
                     if negatives:
                         bl_value = abs(int(negatives[-1]))
                         stone, cut, size, grade = current_product
