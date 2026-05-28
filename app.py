@@ -14,7 +14,8 @@ def process_pdf(pdf_bytes, mapping_dict):
     dict_non_aa = defaultdict(int)
     current_product = None
     
-    pattern_product = re.compile(r'([A-Za-z][A-Za-z0-9\(\)\#\-\_]*)\s*/\s*([A-Za-z0-9\(\)\#\-\_\.]+)\s*/\s*([0-9\.\*\-\+]*)\s*/\s*([A-Za-z0-9\(\)\@\s\_\.\-\+]+)')
+    # แก้ไข Regex ช่องที่ 2 (Cut) เป็น (.+?) เพื่อรองรับช่องว่างและเครื่องหมาย / ซ้อนด้านในวงเล็บ
+    pattern_product = re.compile(r'([A-Za-z][A-Za-z0-9\(\)\#\-\_\+]*)\s*/\s*(.+?)\s*/\s*([0-9\.\*\-\+]*)\s*/\s*([A-Za-z0-9\(\)\@\s\_\.\-\+]+)')
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         for page in pdf.pages:
@@ -77,7 +78,6 @@ if mapping_file is not None:
     try:
         if mapping_file.name.lower().endswith('.csv'):
             file_bytes = mapping_file.getvalue()
-            # วนลูปทดสอบการเข้ารหัสภาษาไทยรูปแบบต่างๆ และตรวจจับเครื่องหมายแบ่งคอลัมน์อัตโนมัติ
             for encoding in ['utf-8', 'utf-8-sig', 'cp874', 'tis-620']:
                 try:
                     df_map = pd.read_csv(io.BytesIO(file_bytes), sep=None, engine='python', encoding=encoding)
