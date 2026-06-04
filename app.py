@@ -27,6 +27,7 @@ def process_pdf(pdf_bytes, mapping_dict):
             for i, line in enumerate(lines):
                 line_str = line.strip()
                 
+                # 1. ค้นหาและอัปเดตชื่อพลอยล่าสุดที่กำลังอ่าน
                 match = pattern_product.search(line_str)
                 if match:
                     stone_abbr = match.group(1).strip()
@@ -41,29 +42,49 @@ def process_pdf(pdf_bytes, mapping_dict):
                     
                     current_product = (stone, cut, size, grade)
                 
-                if current_product and 'Total Inventory' in line_str:
-                    # ค้นหาตัวเลขติดลบ รองรับกรณี - 20 (มีช่องว่าง)
-                    negatives = re.findall(r'-\s*\d+', line_str)
+                # 2. เมื่อเจอจุดบอกยอดรวม (Total Inventory) ให้เริ่มหาตัวเลขติดลบ
+                if 'Total Inventory' in line_str:
+                    negatives = None
                     
-                    # ขยายระยะการค้นหาลงด้านล่างเป็น 10 บรรทัด ป้องกันตัวเลขตกหล่น
-                    if not negatives:
-                        for j in range(i, min(len(lines), i + 10)):
-                            if re.search(r'-\s*\d+', lines[j]):
-                                negatives = re.findall(r'-\s*\d+', lines[j])
-                                break
+                    # ค้นหาตัวเลขติดลบลงไปด้านล่างสูงสุด 30 บรรทัด (แก้ปัญหาบรรทัดห่างเกินไป)
+                    for j in range(i, min(len(lines), i + 30)):
+                        # ถ้าเจอคำว่า Total Inventory ของออเดอร์ถัดไป ให้หยุดค้นหาทันที ป้องกันการดึงเลขข้ามพลอย
+                        if j > i and 'Total Inventory' in lines[j]:
+                            break
+                            
+                        # ค้นหาเลขติดลบ โดยต้องอยู่หน้าสุดหรือมีช่องว่างนำหน้า (ป้องกันการดึงรหัส PO-1072)
+                        if re.search(r'(?:^|\s)-\s*\d+', lines[j]):
+                            negatives = re.findall(r'(?:^|\s)-\s*\d+', lines[j])
+                            break
 
                     if negatives:
-                        # ลบช่องว่างออกจากเครื่องหมายก่อนแปลงเป็นตัวเลข
-                        clean_val = negatives[-1].replace(" ", "")
-                        bl_value = abs(int(clean_val))
-                        stone, cut, size, grade = current_product
+                        # ลบช่องว่างและเครื่องหมายลบ เพื่อเอาเฉพาะตัวเลข
+                        clean_val = negatives[-1].replace(" ", "").replace("-", "")
+                        bl_value = int(clean_val)
                         
-                        if grade.upper().startswith('AA'):
-                            dict_aa[(stone, cut, size, grade)] += bl_value
-                        else:
-                            dict_non_aa[(stone, cut, size, grade)] += bl_value
-                            
-                        current_product = None
+                        # เช็คเผื่อกรณีที่ PDF เพี้ยน สลับให้คำว่า Total Inventory ขึ้นมาก่อนชื่อพลอย 1-3 บรรทัด
+                        actual_product = current_product
+                        for k in range(i, min(len(lines), i + 4)):
+                            match_next = pattern_product.search(lines[k].strip())
+                            if match_next:
+                                stone_abbr = match_next.group(1).strip()
+                                stone = mapping_dict.get(stone_abbr, stone_abbr)
+                                cut = match_next.group(2).strip()
+                                size = match_next.group(3).strip()
+                                grade = match_next.group(4).strip()
+                                grade = re.split(r'\s{2,}', grade)[0]
+                                grade = re.sub(r'\s+[\d\.]+$', '', grade).strip()
+                                actual_product = (stone, cut, size, grade)
+                                current_product = actual_product # อัปเดตให้ระบบจำไว้
+                                break
+                                
+                        # บันทึกข้อมูลลงตาราง
+                        if actual_product and bl_value > 0:
+                            stone, cut, size, grade = actual_product
+                            if grade.upper().startswith('AA'):
+                                dict_aa[(stone, cut, size, grade)] += bl_value
+                            else:
+                                dict_non_aa[(stone, cut, size, grade)] += bl_value
 
     data_aa = [{'Stone': k[0], 'Cut': k[1], 'Size': k[2], 'PCS': v, 'Grade': k[3]} for k, v in dict_aa.items()]
     data_non_aa = [{'Stone': k[0], 'Cut': k[1], 'Size': k[2], 'PCS': v, 'Grade': k[3]} for k, v in dict_non_aa.items()]
@@ -72,8 +93,10 @@ def process_pdf(pdf_bytes, mapping_dict):
     df_non_aa = pd.DataFrame(data_non_aa)
     
     if not df_aa.empty:
+        df_aa = df_aa.groupby(['Stone', 'Cut', 'Size', 'Grade'], as_index=False)['PCS'].sum()
         df_aa = df_aa.sort_values(by=['Stone', 'Cut', 'Size']).reset_index(drop=True)
     if not df_non_aa.empty:
+        df_non_aa = df_non_aa.groupby(['Stone', 'Cut', 'Size', 'Grade'], as_index=False)['PCS'].sum()
         df_non_aa = df_non_aa.sort_values(by=['Stone', 'Cut', 'Size']).reset_index(drop=True)
         
     return df_aa, df_non_aa
