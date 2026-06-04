@@ -12,79 +12,62 @@ st.title("💎 ระบบแยกข้อมูล OSD Stone")
 def process_pdf(pdf_bytes, mapping_dict):
     dict_aa = defaultdict(int)
     dict_non_aa = defaultdict(int)
-    current_product = None
     
-    # Regex สำหรับหาชื่อพลอย ครอบคลุม Cut ทุกรูปแบบรวมถึง DR(3.00MM)
     pattern_product = re.compile(r'([A-Za-z][A-Za-z0-9\(\)\#\-\_\+]*)\s*/\s*(.+?)\s*/\s*([0-9\.\*\-\+]*)\s*/\s*([A-Za-z0-9\(\)\@\s\_\.\-\+]+)')
 
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
         for page in pdf.pages:
-            text = page.extract_text()
+            text = page.extract_text(layout=True) # ใช้ layout=True เพื่อรักษารูปแบบตาราง
             if not text:
                 continue
                 
             lines = text.split('\n')
+            
+            # ระบบค้นหาแบบ 2 ทิศทาง (บน-ล่าง)
             for i, line in enumerate(lines):
-                line_str = line.strip()
-                
-                # 1. ค้นหาและอัปเดตชื่อพลอยล่าสุดที่กำลังอ่าน
-                match = pattern_product.search(line_str)
-                if match:
-                    stone_abbr = match.group(1).strip()
-                    stone = mapping_dict.get(stone_abbr, stone_abbr)
+                if 'Total Inventory:' in line:
+                    # หาระยะค้นหา (ย้อนขึ้น 10 บรรทัด และลงไป 10 บรรทัด)
+                    start_idx = max(0, i - 10)
+                    end_idx = min(len(lines), i + 10)
+                    search_block = lines[start_idx:end_idx]
                     
-                    cut = match.group(2).strip()
-                    size = match.group(3).strip()
-                    grade = match.group(4).strip()
+                    current_product = None
+                    bl_value = 0
                     
-                    grade = re.split(r'\s{2,}', grade)[0]
-                    grade = re.sub(r'\s+[\d\.]+$', '', grade).strip()
-                    
-                    current_product = (stone, cut, size, grade)
-                
-                # 2. เมื่อเจอจุดบอกยอดรวม (Total Inventory) ให้เริ่มหาตัวเลขติดลบ
-                if 'Total Inventory' in line_str:
-                    negatives = None
-                    
-                    # ค้นหาตัวเลขติดลบลงไปด้านล่างสูงสุด 30 บรรทัด (แก้ปัญหาบรรทัดห่างเกินไป)
-                    for j in range(i, min(len(lines), i + 30)):
-                        # ถ้าเจอคำว่า Total Inventory ของออเดอร์ถัดไป ให้หยุดค้นหาทันที ป้องกันการดึงเลขข้ามพลอย
-                        if j > i and 'Total Inventory' in lines[j]:
-                            break
+                    # 1. หาชื่อพลอยในบล็อกนี้
+                    for b_line in search_block:
+                        match = pattern_product.search(b_line.strip())
+                        if match:
+                            stone_abbr = match.group(1).strip()
+                            stone = mapping_dict.get(stone_abbr, stone_abbr)
+                            cut = match.group(2).strip()
+                            size = match.group(3).strip()
+                            grade = match.group(4).strip()
+                            grade = re.split(r'\s{2,}', grade)[0]
+                            grade = re.sub(r'\s+[\d\.]+$', '', grade).strip()
+                            current_product = (stone, cut, size, grade)
+                            break # เจอพลอยแล้วหยุดหา
                             
-                        # ค้นหาเลขติดลบ โดยต้องอยู่หน้าสุดหรือมีช่องว่างนำหน้า (ป้องกันการดึงรหัส PO-1072)
-                        if re.search(r'(?:^|\s)-\s*\d+', lines[j]):
-                            negatives = re.findall(r'(?:^|\s)-\s*\d+', lines[j])
-                            break
-
-                    if negatives:
-                        # ลบช่องว่างและเครื่องหมายลบ เพื่อเอาเฉพาะตัวเลข
-                        clean_val = negatives[-1].replace(" ", "").replace("-", "")
-                        bl_value = int(clean_val)
-                        
-                        # เช็คเผื่อกรณีที่ PDF เพี้ยน สลับให้คำว่า Total Inventory ขึ้นมาก่อนชื่อพลอย 1-3 บรรทัด
-                        actual_product = current_product
-                        for k in range(i, min(len(lines), i + 4)):
-                            match_next = pattern_product.search(lines[k].strip())
-                            if match_next:
-                                stone_abbr = match_next.group(1).strip()
-                                stone = mapping_dict.get(stone_abbr, stone_abbr)
-                                cut = match_next.group(2).strip()
-                                size = match_next.group(3).strip()
-                                grade = match_next.group(4).strip()
-                                grade = re.split(r'\s{2,}', grade)[0]
-                                grade = re.sub(r'\s+[\d\.]+$', '', grade).strip()
-                                actual_product = (stone, cut, size, grade)
-                                current_product = actual_product # อัปเดตให้ระบบจำไว้
+                    # 2. หายอดติดลบในบรรทัดที่มีคำว่า Total Inventory หรือบรรทัดใกล้เคียง
+                    if current_product:
+                        for b_line in lines[i:min(len(lines), i + 5)]: # ดูลงมาจาก Total นิดหน่อย
+                            negatives = re.findall(r'-\d+', b_line)
+                            if negatives:
+                                bl_value = abs(int(negatives[-1]))
                                 break
-                                
-                        # บันทึกข้อมูลลงตาราง
-                        if actual_product and bl_value > 0:
-                            stone, cut, size, grade = actual_product
+                        
+                        # บันทึกข้อมูล
+                        if bl_value > 0:
+                            stone, cut, size, grade = current_product
                             if grade.upper().startswith('AA'):
                                 dict_aa[(stone, cut, size, grade)] += bl_value
                             else:
                                 dict_non_aa[(stone, cut, size, grade)] += bl_value
+                            
+                            # เคลียร์ตัวแปรเพื่อป้องกันการนับซ้ำใน Total ถัดไป
+                            for j in range(start_idx, end_idx):
+                                if pattern_product.search(lines[j]):
+                                    lines[j] = lines[j].replace(match.group(0), "PROCESSED_STONE")
 
     data_aa = [{'Stone': k[0], 'Cut': k[1], 'Size': k[2], 'PCS': v, 'Grade': k[3]} for k, v in dict_aa.items()]
     data_non_aa = [{'Stone': k[0], 'Cut': k[1], 'Size': k[2], 'PCS': v, 'Grade': k[3]} for k, v in dict_non_aa.items()]
@@ -92,6 +75,7 @@ def process_pdf(pdf_bytes, mapping_dict):
     df_aa = pd.DataFrame(data_aa)
     df_non_aa = pd.DataFrame(data_non_aa)
     
+    # รวมข้อมูลที่ซ้ำกันเผื่อระบบดึงมา 2 รอบจากหน้าต่อหน้า
     if not df_aa.empty:
         df_aa = df_aa.groupby(['Stone', 'Cut', 'Size', 'Grade'], as_index=False)['PCS'].sum()
         df_aa = df_aa.sort_values(by=['Stone', 'Cut', 'Size']).reset_index(drop=True)
