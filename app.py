@@ -19,6 +19,22 @@ STONE_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9()#_+\-]*")
 SIZE_PATTERN = re.compile(r"[0-9][0-9.*+\-xX]*")
 
 
+if "raw_upload_version" not in st.session_state:
+    st.session_state.raw_upload_version = 0
+
+if "pasted_raw_text" not in st.session_state:
+    st.session_state.pasted_raw_text = ""
+
+
+def clear_raw_inputs():
+    """ล้างไฟล์ดิบ ข้อความ และตารางที่แก้ไขไว้บนหน้าจอ"""
+    st.session_state.raw_upload_version += 1
+    st.session_state.pasted_raw_text = ""
+    st.session_state.pop("editor_aa", None)
+    st.session_state.pop("editor_non_aa", None)
+    st.cache_data.clear()
+
+
 def read_text_file(uploaded_file) -> str:
     file_bytes = uploaded_file.getvalue()
     last_error = None
@@ -201,6 +217,26 @@ def process_raw_text(raw_text: str, mapping_items):
     return df_aa, df_non_aa, df_errors, stats
 
 
+def calculate_column_width(
+    dataframe: pd.DataFrame,
+    column_name: str,
+    minimum: int,
+    maximum: int,
+) -> int:
+    """คำนวณความกว้างคอลัมน์จากข้อความจริง โดยจำกัดไม่ให้กว้างเกินไป"""
+    values = [column_name]
+    if column_name in dataframe.columns:
+        values.extend(
+            dataframe[column_name]
+            .fillna("")
+            .astype(str)
+            .tolist()
+        )
+
+    longest = max((len(value) for value in values), default=minimum)
+    return min(max(longest + 3, minimum), maximum)
+
+
 def create_excel(df_aa: pd.DataFrame, df_non_aa: pd.DataFrame) -> bytes:
     output = io.BytesIO()
 
@@ -213,10 +249,25 @@ def create_excel(df_aa: pd.DataFrame, df_non_aa: pd.DataFrame) -> bytes:
                 "border": 1,
                 "align": "center",
                 "valign": "vcenter",
+                "bg_color": "#D9EAF7",
             }
         )
-        text_format = workbook.add_format({"num_format": "@", "border": 1})
-        number_format = workbook.add_format({"num_format": "0", "border": 1})
+        text_center_format = workbook.add_format(
+            {
+                "num_format": "@",
+                "border": 1,
+                "align": "center",
+                "valign": "vcenter",
+            }
+        )
+        number_center_format = workbook.add_format(
+            {
+                "num_format": "0",
+                "border": 1,
+                "align": "center",
+                "valign": "vcenter",
+            }
+        )
 
         for sheet_name, dataframe in (
             ("AA_Grade", df_aa),
@@ -226,14 +277,28 @@ def create_excel(df_aa: pd.DataFrame, df_non_aa: pd.DataFrame) -> bytes:
             worksheet = writer.sheets[sheet_name]
 
             worksheet.freeze_panes(1, 0)
-            worksheet.autofilter(0, 0, len(dataframe), len(dataframe.columns) - 1)
-            worksheet.set_row(0, 22, header_format)
+            worksheet.autofilter(
+                0,
+                0,
+                len(dataframe),
+                len(dataframe.columns) - 1,
+            )
+            worksheet.set_row(0, 24, header_format)
+            worksheet.set_default_row(21)
 
-            worksheet.set_column("A:A", 16, text_format)
-            worksheet.set_column("B:B", 28, text_format)
-            worksheet.set_column("C:C", 16, text_format)
-            worksheet.set_column("D:D", 10, number_format)
-            worksheet.set_column("E:E", 20, text_format)
+            widths = {
+                "Stone": calculate_column_width(dataframe, "Stone", 10, 24),
+                "Cut": calculate_column_width(dataframe, "Cut", 10, 40),
+                "Size": calculate_column_width(dataframe, "Size", 10, 24),
+                "PCS": calculate_column_width(dataframe, "PCS", 8, 12),
+                "Grade": calculate_column_width(dataframe, "Grade", 12, 30),
+            }
+
+            worksheet.set_column("A:A", widths["Stone"], text_center_format)
+            worksheet.set_column("B:B", widths["Cut"], text_center_format)
+            worksheet.set_column("C:C", widths["Size"], text_center_format)
+            worksheet.set_column("D:D", widths["PCS"], number_center_format)
+            worksheet.set_column("E:E", widths["Grade"], text_center_format)
 
     return output.getvalue()
 
@@ -272,16 +337,30 @@ st.caption(
     "ไม่ต้องแปลงเป็น PDF"
 )
 
-raw_file = st.file_uploader(
-    "อัปโหลดไฟล์ดิบ",
-    type=["txt", "tsv"],
-    key="raw_report",
-)
+upload_column, clear_column = st.columns([5, 1])
+
+with upload_column:
+    raw_file = st.file_uploader(
+        "อัปโหลดไฟล์ดิบ",
+        type=["txt", "tsv"],
+        key=f"raw_report_{st.session_state.raw_upload_version}",
+    )
+
+with clear_column:
+    st.write("")
+    st.write("")
+    st.button(
+        "🧹 ล้างค่า",
+        on_click=clear_raw_inputs,
+        use_container_width=True,
+        help="ล้างไฟล์ดิบ ข้อความที่วาง และผลลัพธ์บนหน้าจอ",
+    )
 
 pasted_text = st.text_area(
     "หรือวางข้อความดิบตรงนี้",
     height=140,
     placeholder="วางข้อมูล Outstanding Stones due date ตรงนี้…",
+    key="pasted_raw_text",
 )
 
 raw_text = ""
