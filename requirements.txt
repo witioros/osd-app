@@ -3,3 +3,6 @@ pdfplumber
 pandas
 xlsxwriter
 openpyxl
+pytesseract
+pypdfium2
+Pillow
